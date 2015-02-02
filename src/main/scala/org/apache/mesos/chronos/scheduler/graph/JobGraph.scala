@@ -1,6 +1,7 @@
 package org.apache.mesos.chronos.scheduler.graph
 
 import java.io.StringWriter
+import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 import javax.annotation.concurrent.ThreadSafe
 
@@ -9,7 +10,9 @@ import org.jgrapht.experimental.dag.DirectedAcyclicGraph
 import org.jgrapht.ext.{DOTExporter, IntegerNameProvider, StringNameProvider}
 import org.jgrapht.graph.DefaultEdge
 
-import scala.collection.mutable.{HashMap, ListBuffer, Map, SynchronizedMap}
+import scala.collection.convert.decorateAsScala._
+import scala.collection.{mutable, _}
+import scala.collection.mutable.ListBuffer
 
 /**
  * This class provides methods to access dependency structures of jobs.
@@ -18,9 +21,9 @@ import scala.collection.mutable.{HashMap, ListBuffer, Map, SynchronizedMap}
 @ThreadSafe
 class JobGraph {
   val dag = new DirectedAcyclicGraph[String, DefaultEdge](classOf[DefaultEdge])
-  val edgeInvocationCount = Map[DefaultEdge, Long]()
+  val edgeInvocationCount = mutable.Map[DefaultEdge, Long]()
   private[this] val log = Logger.getLogger(getClass.getName)
-  private[this] val jobNameMapping = new HashMap[String, BaseJob] with SynchronizedMap[String, BaseJob]
+  private[this] val jobNameMapping: concurrent.Map[String, BaseJob] = new ConcurrentHashMap().asScala
   private[this] val lock = new Object
 
   def parentJobs(job: DependencyBasedJob) = parentJobsOption(job) match {
@@ -80,7 +83,7 @@ class JobGraph {
 
   def removeVertex(vertex: BaseJob) {
     log.info("Removing vertex:" + vertex.name)
-    require(!lookupVertex(vertex.name).isEmpty, "Vertex doesn't exist")
+    require(lookupVertex(vertex.name).isDefined, "Vertex doesn't exist")
     jobNameMapping.remove(vertex.name)
     lock.synchronized {
       dag.removeVertex(vertex.name)
@@ -178,13 +181,6 @@ class JobGraph {
     }
   }
 
-  def getEdgesToParents(child: String): Iterable[DefaultEdge] = {
-    lock.synchronized {
-      import scala.collection.JavaConversions._
-      dag.edgesOf(child).filter(dag.getEdgeTarget(_).eq(child))
-    }
-  }
-
   def resetDependencyInvocations(vertex: String) {
     val edges = getEdgesToParents(vertex)
     lock.synchronized {
@@ -192,6 +188,13 @@ class JobGraph {
         edge =>
           edgeInvocationCount.put(edge, 0)
       })
+    }
+  }
+
+  def getEdgesToParents(child: String): Iterable[DefaultEdge] = {
+    lock.synchronized {
+      import scala.collection.JavaConversions._
+      dag.edgesOf(child).filter(n => dag.getEdgeTarget(n).eq(child))
     }
   }
 
